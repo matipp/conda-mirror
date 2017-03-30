@@ -101,6 +101,31 @@ def _match(all_packages, key_glob_dict):
 
     return matched
 
+def _match_py_version(all_packages, py_version):
+    """
+
+    Parameters
+    ----------
+    all_packages : iterable
+        Iterable of package metadata dicts from repodata.json
+    py_version : the python version restriction
+
+    Returns
+    -------
+    matched : dict
+        Iterable of package metadata dicts which match the `target_packages`
+        (key, glob_value) tuples
+    """
+    matched = dict()
+    dep = "python %s" % py_version
+    for pkg_name, pkg_info in all_packages.items():
+        pkg_deps = pkg_info['depends']
+
+        if dep in pkg_deps:
+            matched.update({pkg_name: pkg_info})
+
+    return matched
+
 
 def _make_arg_parser():
     """
@@ -122,6 +147,10 @@ def _make_arg_parser():
     ap.add_argument(
         '--target-directory',
         help='The place where packages should be mirrored to',
+    )
+    ap.add_argument(
+        '--target-version',
+        help='The target python version',
     )
     ap.add_argument(
         '--temp-directory',
@@ -224,7 +253,7 @@ def cli():
     whitelist = config_dict.get('whitelist')
 
     main(args.upstream_channel, args.target_directory, args.temp_directory,
-         args.platform, blacklist, whitelist)
+         args.platform, blacklist, whitelist, args.target_version)
 
 
 def _remove_package(pkg_path, reason):
@@ -380,7 +409,7 @@ def _validate_packages(package_repodata, package_directory):
 
 
 def main(upstream_channel, target_directory, temp_directory, platform,
-         blacklist=None, whitelist=None):
+         blacklist=None, whitelist=None, target_version=None):
     """
 
     Parameters
@@ -456,10 +485,17 @@ def main(upstream_channel, target_directory, temp_directory, platform,
     info, packages = get_repodata(upstream_channel, platform)
     local_directory = os.path.join(target_directory, platform)
 
+    print("Packages to download before black/whitelist matching %d" % len(packages))
+
     # 1. validate local repo
     # validating all packages is taking many hours.
     # _validate_packages(repodata=repodata,
     #                    package_directory=local_directory)
+
+    # 1b. find matching python versions
+    if target_version:
+        packages =_match_py_version(packages, target_version)
+        print("Packages to download after python version matching %d" % len(packages))
 
     # 2. figure out blacklisted packages
     blacklist_packages = {}
@@ -472,6 +508,7 @@ def main(upstream_channel, target_directory, temp_directory, platform,
             matched_packages = _match(packages, blist)
             blacklist_packages.update(matched_packages)
         logger.debug(pformat(sorted(blacklist_packages)))
+        print("Packages to download after blacklist matching %d" % len(blacklist_packages))
 
     # 3. un-blacklist packages that are actually whitelisted
     # match whitelist on blacklist
@@ -482,9 +519,11 @@ def main(upstream_channel, target_directory, temp_directory, platform,
             matched_packages = _match(packages, wlist)
             whitelist_packages.update(matched_packages)
         logger.debug(pformat(sorted(whitelist_packages)))
+
     # make final mirror list of not-blacklist + whitelist
     true_blacklist = set(blacklist_packages.keys()) - set(
         whitelist_packages.keys())
+
     logger.debug('true blacklist')
     logger.debug(pformat(sorted(whitelist_packages)))
     possible_packages_to_mirror = set(packages.keys()) - true_blacklist
